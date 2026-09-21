@@ -95,4 +95,25 @@ class Database {
     public static function rollBack(): bool {
         return self::connect()->rollBack();
     }
+
+    public static function createDatabaseIfNotExists(?string $name = null): bool {
+        $default = Config::get('database.default', 'mysql');
+        $name = $name ?? $default;
+
+        $config = Config::get("database.connections.{$name}");
+        if (!$config || ($config['driver'] ?? 'mysql') !== 'mysql') {
+            return false;
+        }
+
+        $host = $config['host'];
+        $port = $config['port'] ?? 3306;
+        $db = $config['database'];
+        $user = $config['username'];
+        $pass = $config['password'];
+
+        $pdo = new PDO("mysql:host={$host};port={$port}", $user, $pass);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        return true;
+    }
 }
