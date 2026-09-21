@@ -1,0 +1,13 @@
+{
+  "name": "kyro/framework",
+  "description": "Kyro PHP Framework - Fast, elegant and lightweight PHP MVC Framework",
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/",
+      "Core\\": "core/"
+    },
+    "files": [
+      "core/helpers.php"
+    ]
+  }
+}

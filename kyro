@@ -1,0 +1,442 @@
+#!/usr/bin/env php
+<?php
+
+require __DIR__ . '/vendor/autoload.php';
+
+use Core\App;
+use Core\Config;
+use Core\Database;
+use Core\Env;
+use Core\Router;
+
+// Bootstrap application for CLI
+Env::load();
+Config::load();
+
+$app = App::getInstance();
+
+// Helpers for CLI styling
+class Console {
+    public static function info(string $text): void {
+        echo "\033[36m{$text}\033[0m\n";
+    }
+
+    public static function success(string $text): void {
+        echo "\033[32m✔ {$text}\033[0m\n";
+    }
+
+    public static function error(string $text): void {
+        echo "\033[31m✖ {$text}\033[0m\n";
+    }
+
+    public static function warn(string $text): void {
+        echo "\033[33m! {$text}\033[0m\n";
+    }
+
+    public static function banner(): void {
+        echo "\033[35m";
+        echo "   _  ______   ______   ____  \n";
+        echo "  | |/ / \ \ / /  _ \ / __ \ \n";
+        echo "  | ' /   \ V /| |_) | |  | |\n";
+        echo "  |  <     | | |  _ <| |  | |\n";
+        echo "  |_|\_\   |_| |_| \_\\____/ \n";
+        echo "\033[0m";
+        echo "\033[1;30m  Kyro Framework CLI - v1.0.0 (PHP " . PHP_VERSION . ")\033[0m\n\n";
+    }
+}
+
+$command = $argv[1] ?? 'help';
+
+switch ($command) {
+    case 'serve':
+        $host = '127.0.0.1';
+        $port = '8000';
+
+        foreach ($argv as $arg) {
+            if (str_starts_with($arg, '--port=')) {
+                $port = substr($arg, 7);
+            }
+            if (str_starts_with($arg, '--host=')) {
+                $host = substr($arg, 7);
+            }
+        }
+
+        Console::banner();
+        Console::info("Kyro development server dimulai di: \033[1;34mhttp://{$host}:{$port}\033[0m");
+        Console::warn("Tekan Ctrl+C untuk menghentikan server.");
+        passthru("php -S {$host}:{$port} -t public");
+        break;
+
+    case 'route:list':
+        Console::banner();
+
+        // Load all routes
+        $baseDir = __DIR__;
+        if (file_exists($baseDir . '/routes/web.php')) {
+            require_once $baseDir . '/routes/web.php';
+        }
+        if (file_exists($baseDir . '/routes/api.php')) {
+            Router::group(['prefix' => '/api'], function () use ($baseDir) {
+                require_once $baseDir . '/routes/api.php';
+            });
+        }
+
+        $routes = Router::getRoutes();
+
+        echo str_repeat("─", 80) . "\n";
+        printf("\033[1m%-10s %-25s %-30s %-12s\033[0m\n", "Method", "URI", "Action", "Middleware");
+        echo str_repeat("─", 80) . "\n";
+
+        foreach ($routes as $route) {
+            $methods = implode('|', $route->getMethods());
+            $uri = $route->getUri();
+            $action = $route->getAction();
+
+            if (is_callable($action)) {
+                $actionName = 'Closure';
+            } elseif (is_array($action)) {
+                $actionName = basename(str_replace('\\', '/', $action[0])) . '@' . $action[1];
+            } else {
+                $actionName = (string)$action;
+            }
+
+            $middlewares = implode(', ', array_map(function ($m) {
+                return basename(str_replace('\\', '/', $m));
+            }, $route->getMiddlewares())) ?: '-';
+
+            $colorMethod = match (true) {
+                str_contains($methods, 'GET') => "\033[32m",
+                str_contains($methods, 'POST') => "\033[33m",
+                str_contains($methods, 'DELETE') => "\033[31m",
+                default => "\033[36m"
+            };
+
+            printf("{$colorMethod}%-10s\033[0m %-25s %-30s %-12s\n", $methods, $uri, substr($actionName, 0, 29), $middlewares);
+        }
+
+        echo str_repeat("─", 80) . "\n\n";
+        break;
+
+    case 'make:controller':
+        $name = $argv[2] ?? null;
+        if (!$name) {
+            Console::error("Harap tentukan nama controller. Contoh: php kyro make:controller UserController");
+            exit(1);
+        }
+
+        $name = str_replace('.php', '', $name);
+        $isResource = in_array('--resource', $argv);
+        $dir = __DIR__ . '/app/Controllers';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $file = "{$dir}/{$name}.php";
+        if (file_exists($file)) {
+            Console::warn("Controller [{$name}] sudah ada.");
+            exit(0);
+        }
+
+        if ($isResource) {
+            $content = "<?php
+
+namespace App\Controllers;
+
+use Core\Controller;
+use Core\Request;
+use Core\Response;
+
+class {$name} extends Controller {
+    public function index(): Response {
+        return \$this->json(['message' => 'Daftar resource {$name}']);
+    }
+
+    public function show(\$id): Response {
+        return \$this->json(['message' => 'Detail resource ID: ' . \$id]);
+    }
+
+    public function store(): Response {
+        \$data = \$this->validate([
+            // 'title' => 'required|min:3',
+        ]);
+        return \$this->json(['message' => 'Resource berhasil dibuat', 'data' => \$data], 201);
+    }
+
+    public function update(\$id): Response {
+        return \$this->json(['message' => 'Resource ID ' . \$id . ' diperbarui']);
+    }
+
+    public function destroy(\$id): Response {
+        return \$this->json(['message' => 'Resource ID ' . \$id . ' dihapus']);
+    }
+}
+";
+        } else {
+            $content = "<?php
+
+namespace App\Controllers;
+
+use Core\Controller;
+use Core\Request;
+use Core\Response;
+
+class {$name} extends Controller {
+    public function index() {
+        return \$this->view('home', [
+            'title' => '{$name} berhasil dimuat!'
+        ]);
+    }
+}
+";
+        }
+
+        file_put_contents($file, $content);
+        Console::success("Controller [app/Controllers/{$name}.php] berhasil dibuat.");
+        break;
+
+    case 'make:model':
+        $name = $argv[2] ?? null;
+        if (!$name) {
+            Console::error("Harap tentukan nama model. Contoh: php kyro make:model Product");
+            exit(1);
+        }
+
+        $name = str_replace('.php', '', $name);
+        $withMigration = in_array('-m', $argv) || in_array('--migration', $argv);
+
+        $dir = __DIR__ . '/app/Models';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $file = "{$dir}/{$name}.php";
+        if (file_exists($file)) {
+            Console::warn("Model [{$name}] sudah ada.");
+        } else {
+            $tableName = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $name)) . 's';
+            $content = "<?php
+
+namespace App\Models;
+
+use Core\Model;
+
+class {$name} extends Model {
+    protected ?string \$table = '{$tableName}';
+
+    protected array \$fillable = [
+        // 'name', 'status'
+    ];
+
+    protected array \$guarded = [
+        'id'
+    ];
+}
+";
+            file_put_contents($file, $content);
+            Console::success("Model [app/Models/{$name}.php] berhasil dibuat.");
+        }
+
+        if ($withMigration) {
+            $tableName = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $name)) . 's';
+            $timestamp = date('Y_m_d_His');
+            $migName = "Create{$name}sTable";
+            $migFile = __DIR__ . "/database/migrations/{$timestamp}_create_{$tableName}_table.php";
+
+            $migContent = "<?php
+
+use Core\Migration;
+
+class {$migName} extends Migration {
+    public function up(): void {
+        \$sql = \"CREATE TABLE IF NOT EXISTS {$tableName} (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\";
+
+        \$this->execute(\$sql);
+    }
+
+    public function down(): void {
+        \$this->dropTableIfExists('{$tableName}');
+    }
+}
+";
+            $migDir = dirname($migFile);
+            if (!is_dir($migDir)) {
+                mkdir($migDir, 0755, true);
+            }
+            file_put_contents($migFile, $migContent);
+            Console::success("Migration [" . basename($migFile) . "] berhasil dibuat.");
+        }
+        break;
+
+    case 'make:middleware':
+        $name = $argv[2] ?? null;
+        if (!$name) {
+            Console::error("Harap tentukan nama middleware. Contoh: php kyro make:middleware AuthMiddleware");
+            exit(1);
+        }
+
+        $name = str_replace('.php', '', $name);
+        $dir = __DIR__ . '/app/Middlewares';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $file = "{$dir}/{$name}.php";
+        if (file_exists($file)) {
+            Console::warn("Middleware [{$name}] sudah ada.");
+            exit(0);
+        }
+
+        $content = "<?php
+
+namespace App\Middlewares;
+
+use Closure;
+use Core\Middleware;
+use Core\Request;
+use Core\Response;
+
+class {$name} implements Middleware {
+    public function handle(Request \$request, Closure \$next) {
+        // Logika middleware sebelum request dieksekusi
+
+        \$response = \$next(\$request);
+
+        // Logika middleware setelah response diperoleh
+        return \$response;
+    }
+}
+";
+        file_put_contents($file, $content);
+        Console::success("Middleware [app/Middlewares/{$name}.php] berhasil dibuat.");
+        break;
+
+    case 'make:migration':
+        $name = $argv[2] ?? null;
+        if (!$name) {
+            Console::error("Harap tentukan nama migrasi. Contoh: php kyro make:migration create_products_table");
+            exit(1);
+        }
+
+        $timestamp = date('Y_m_d_His');
+        $className = str_replace(' ', '', ucwords(str_replace('_', ' ', $name)));
+        $fileName = "{$timestamp}_{$name}.php";
+        $migDir = __DIR__ . '/database/migrations';
+        if (!is_dir($migDir)) {
+            mkdir($migDir, 0755, true);
+        }
+
+        $file = "{$migDir}/{$fileName}";
+        $content = "<?php
+
+use Core\Migration;
+
+class {$className} extends Migration {
+    public function up(): void {
+        // \$sql = \"CREATE TABLE ...\";
+        // \$this->execute(\$sql);
+    }
+
+    public function down(): void {
+        // \$this->dropTableIfExists('table_name');
+    }
+}
+";
+        file_put_contents($file, $content);
+        Console::success("Migration [database/migrations/{$fileName}] berhasil dibuat.");
+        break;
+
+    case 'migrate':
+        Console::banner();
+        Console::info("Menjalankan migrasi database...");
+
+        $migDir = __DIR__ . '/database/migrations';
+        if (!is_dir($migDir)) {
+            Console::warn("Tidak ada folder database/migrations.");
+            exit(0);
+        }
+
+        $files = glob("{$migDir}/*.php");
+        if (empty($files)) {
+            Console::warn("Tidak ada file migrasi yang ditemukan.");
+            exit(0);
+        }
+
+        try {
+            foreach ($files as $file) {
+                require_once $file;
+                $basename = basename($file, '.php');
+                $parts = explode('_', $basename);
+                // remove timestamp part (first 4 parts: Y, m, d, His)
+                $nameParts = array_slice($parts, 4);
+                $className = str_replace(' ', '', ucwords(implode(' ', $nameParts)));
+
+                if (!class_exists($className)) {
+                    // Fallback search classes in file
+                    $classes = get_declared_classes();
+                    $className = end($classes);
+                }
+
+                if (class_exists($className)) {
+                    $mig = new $className();
+                    $mig->up();
+                    Console::success("Migrated: " . basename($file));
+                }
+            }
+            Console::success("Semua migrasi berhasil dijalankan!");
+        } catch (\Throwable $e) {
+            Console::error("Migrasi gagal: " . $e->getMessage());
+            exit(1);
+        }
+        break;
+
+    case 'key:generate':
+        $key = 'base64:' . base64_encode(random_bytes(32));
+        $envFile = __DIR__ . '/.env';
+
+        if (file_exists($envFile)) {
+            $content = file_get_contents($envFile);
+            if (preg_match('/^APP_KEY=.*/m', $content)) {
+                $content = preg_replace('/^APP_KEY=.*/m', "APP_KEY={$key}", $content);
+            } else {
+                $content .= "\nAPP_KEY={$key}\n";
+            }
+            file_put_contents($envFile, $content);
+            Console::success("Application key [{$key}] berhasil dibuat dan disimpan ke .env");
+        } else {
+            Console::warn("File .env tidak ditemukan. Kunci Anda: {$key}");
+        }
+        break;
+
+    case 'make:view':
+        $name = $argv[2] ?? 'index';
+        $file = __DIR__ . "/app/Views/{$name}.php";
+        $dir = dirname($file);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        file_put_contents($file, "<h1><?= \$title ?? '{$name}' ?></h1>\n<p>Halaman view Kyro Framework.</p>");
+        Console::success("View [app/Views/{$name}.php] berhasil dibuat.");
+        break;
+
+    case 'help':
+    default:
+        Console::banner();
+        echo "Penggunaan:\n";
+        echo "  php kyro <command> [arguments] [options]\n\n";
+        echo "Daftar Perintah Tersedia:\n";
+        printf("  \033[32m%-22s\033[0m %s\n", "serve", "Menjalankan local development server Kyro");
+        printf("  \033[32m%-22s\033[0m %s\n", "route:list", "Menampilkan daftar seluruh route yang terdaftar");
+        printf("  \033[32m%-22s\033[0m %s\n", "key:generate", "Membuat kunci aplikasi baru dan memperbarui .env");
+        printf("  \033[32m%-22s\033[0m %s\n", "migrate", "Menjalankan seluruh migrasi database");
+        printf("  \033[32m%-22s\033[0m %s\n", "make:controller", "Membuat controller baru (opsi: --resource)");
+        printf("  \033[32m%-22s\033[0m %s\n", "make:model", "Membuat model Active Record baru (opsi: -m)");
+        printf("  \033[32m%-22s\033[0m %s\n", "make:middleware", "Membuat middleware pipeline baru");
+        printf("  \033[32m%-22s\033[0m %s\n", "make:migration", "Membuat file skema migrasi database baru");
+        printf("  \033[32m%-22s\033[0m %s\n", "make:view", "Membuat template view baru di app/Views/");
+        echo "\n";
+        break;
+}
